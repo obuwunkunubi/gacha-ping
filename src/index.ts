@@ -5,8 +5,10 @@ import {
   REST,
   Routes,
   MessageFlags,
+  PermissionFlagsBits,
 } from 'discord.js';
-import { getGuildGroups } from './db';
+import { getGuildGroups, getUserGuildGroups } from './db';
+import type { Group } from './db/schema';
 import { commands } from './commands';
 import {
   handleCreate,
@@ -89,11 +91,48 @@ client.on(Events.InteractionCreate, async (interaction) => {
    */
   if (interaction.isAutocomplete()) {
     const focusedValue = interaction.options.getFocused().toString();
-    const groups = await getGuildGroups(interaction.guildId!);
+    const commandName = interaction.commandName;
+
+    let groups: Group[];
+
+    if (commandName === 'join') {
+      // For join command, get all guild groups
+      groups = await getGuildGroups(interaction.guildId!);
+
+      // Filter out groups the user is already in (users need to see groups they're not in)
+      if (groups.length > 0) {
+        const userGroups = await getUserGuildGroups(
+          interaction.guildId!,
+          interaction.user.id
+        );
+        const userGroupIds = userGroups.map((g) => g.id);
+        groups = groups.filter((g) => !userGroupIds.includes(g.id));
+      }
+    } else if (
+      commandName === 'delete' &&
+      !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)
+    ) {
+      // For delete command (if not admin), show no groups
+      groups = [];
+    } else if (commandName === 'ping' || commandName === 'leave') {
+      // For ping and leave commands, show only groups the user is in
+      groups = await getUserGuildGroups(
+        interaction.guildId!,
+        interaction.user.id
+      );
+    } else {
+      // For any other command, show all groups
+      groups = await getGuildGroups(interaction.guildId!);
+    }
+
+    // Filter groups based on the focused value (autocomplete search)
     const filtered = groups
-      .filter((g) => g.name.startsWith(focusedValue))
+      .filter((g) =>
+        g.name.toLowerCase().startsWith(focusedValue.toLowerCase())
+      )
       .map((g) => ({ name: g.name, value: g.name }));
 
+    // Send the filtered results to autocomplete response
     await interaction.respond(filtered);
     return;
   }

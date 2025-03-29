@@ -137,6 +137,47 @@ export async function getGuildGroups(guildId: string): Promise<Group[]> {
 }
 
 /**
+ * Retrieves groups for a specific user in a specific guild.
+ *
+ * @param guildId The Discord guild ID.
+ * @param userId The Discord user ID.
+ * @returns Array of groups the user is in, sorted by last used timestamp.
+ */
+export async function getUserGuildGroups(guildId: string, userId: string): Promise<Group[]> {
+  try {
+    const result = await db
+      .select({
+        id: groupsTable.id,
+        name: groupsTable.name,
+        guildId: groupsTable.guildId,
+        creatorId: groupsTable.creatorId,
+        lastUsed: groupsTable.lastUsed,
+      })
+      .from(groupsTable)
+      .innerJoin(groupMembersTable, eq(groupsTable.id, groupMembersTable.groupId)) // Join groups with group members
+      .where(
+        and(
+          eq(groupsTable.guildId, guildId), // Filter by guild ID
+          eq(groupMembersTable.userId, userId) // Filter by user ID
+        )
+      )
+      .orderBy(groupsTable.lastUsed); // Sort by last used timestamp
+
+    // Map the result to an array of Group objects
+    return result.map(row => ({
+      id: row.id,
+      name: row.name,
+      guildId: row.guildId,
+      creatorId: row.creatorId,
+      lastUsed: row.lastUsed,
+    }));
+  } catch (error) {
+    console.error('Error getting user guild groups:', error);
+    return [];
+  }
+}
+
+/**
  * Updates the last used timestamp for a group.
  *
  * @param groupId The ID of the group to update.
