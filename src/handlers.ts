@@ -203,6 +203,15 @@ export async function handlePing(
     return;
   }
 
+  // Check if the user is a member of the group
+  if (!(await isMemberInGroup(group.id, interaction.user.id))) {
+    await interaction.reply({
+      content: "❌ You must be a member of this group to ping it!",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   // Update last used timestamp for the group
   await updateGroupLastUsed(group.id);
 
