@@ -1,0 +1,39 @@
+# Dependencies
+node_modules
+bun.lockb
+
+# Environment files
+.env
+.env.*
+
+# Git and GitHub
+.git
+.github
+.gitignore
+
+# Database files (will be managed through volumes)
+*.db
+/data
+
+# Editor configurations
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary files
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# Build artifacts
+/dist
+/build
+
+# Prettier
+.prettierrc

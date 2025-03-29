@@ -1,0 +1,9 @@
+services:
+  gacha-ping:
+    container_name: gacha-ping
+    image: ghcr.io/obuwunkunubi/gacha-ping:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/db
