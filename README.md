@@ -247,11 +247,42 @@ The database is stored in the `./data` volume on your host machine to ensure per
 
 The bot can be configured through environment variables:
 
-| Variable            | Description                            | Default         |
-| ------------------- | -------------------------------------- | --------------- |
-| `DISCORD_BOT_TOKEN` | Your Discord bot authentication token  | Required        |
-| `CREATE_TIMEOUT`    | Cooldown for creating groups (seconds) | 300 (5 minutes) |
-| `PING_TIMEOUT`      | Cooldown for pinging groups (seconds)  | 60 (1 minute)   |
+| Variable            | Description                                | Default         |
+| ------------------- | ------------------------------------------ | --------------- |
+| `DISCORD_BOT_TOKEN` | Your Discord bot authentication token      | Required        |
+| `CREATE_TIMEOUT`    | Cooldown for creating groups (seconds)     | 300 (5 minutes) |
+| `PING_TIMEOUT`      | Cooldown for pinging groups (seconds)      | 60 (1 minute)   |
+| `BOT_STATUS`        | Bot's online status                        | "online"        |
+| `BOT_ACTIVITY_TYPE` | Bot's activity type                        | None            |
+| `BOT_ACTIVITY_NAME` | Text displayed for bot's activity          | None            |
+| `BOT_ACTIVITY_URL`  | URL for streaming activity type            | None            |
+
+### Bot Status Options
+
+The `BOT_STATUS` variable can be set to one of the following values:
+- `online` - Shows the bot as online (green dot)
+- `idle` - Shows the bot as idle (yellow/orange moon)
+- `dnd` - Shows the bot as Do Not Disturb (red dot)
+- `invisible` - Makes the bot appear offline
+
+### Bot Activity Options
+
+When both `BOT_ACTIVITY_TYPE` and `BOT_ACTIVITY_NAME` are set, the bot will display an activity status. The `BOT_ACTIVITY_TYPE` can be one of:
+- `playing` - "Playing [BOT_ACTIVITY_NAME]"
+- `watching` - "Watching [BOT_ACTIVITY_NAME]"
+- `listening` - "Listening to [BOT_ACTIVITY_NAME]"
+- `streaming` - "Streaming [BOT_ACTIVITY_NAME]" (requires `BOT_ACTIVITY_URL` to be set)
+- `competing` - "Competing in [BOT_ACTIVITY_NAME]"
+
+**Important:** If `BOT_ACTIVITY_TYPE` is set to `streaming`, you **must** also set `BOT_ACTIVITY_URL` to a valid Twitch or YouTube URL. If streaming is selected but no URL is provided, the bot will fall back to showing only the status without any activity.
+
+**Example:**
+```
+BOT_STATUS=dnd
+BOT_ACTIVITY_TYPE=playing
+BOT_ACTIVITY_NAME=with dice
+```
+This will show the bot as Do Not Disturb with the status "Playing with dice".
 
 ## 💻 Development
 
