@@ -1,38 +1,17 @@
-# dependencies (bun install)
+# Node.js & package-related files
 node_modules
 
-# output
-out
-dist
-*.tgz
-
-# code coverage
-coverage
-*.lcov
-
-# logs
-logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
-
-# dotenv environment variable files
+# Environment files
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
 
-# caches
-.eslintcache
-.cache
-*.tsbuildinfo
-
-# IntelliJ based IDEs
+# IDE-related files
+.vscode
 .idea
 
-# Finder (MacOS) folder config
-.DS_Store
-
-# database files
+# Database files
 *.db
 /data
+
+# OS-generated files
+.DS_Store
+Thumbs.db

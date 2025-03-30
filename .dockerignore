@@ -1,39 +1,35 @@
-# Dependencies
+# Node.js & package-related files
 node_modules
-bun.lockb
 
 # Environment files
 .env
 .env.*
 
-# Git and GitHub
+# Git and version control
 .git
-.github
 .gitignore
 
-# Database files (will be managed through volumes)
+# Docker files
+.dockerignore
+Dockerfile
+compose.yaml
+
+# Configuration and IDE-related files
+.prettierrc
+.vscode
+.idea
+
+# Documentation & licenses
+LICENSE
+README.md
+
+# Database files
 *.db
 /data
 
-# Editor configurations
-.vscode
-.idea
-*.swp
-*.swo
-
-# Logs
-*.log
-npm-debug.log*
-
-# Temporary files
+# OS-generated files
 .DS_Store
 Thumbs.db
-*.tmp
-*.temp
 
-# Build artifacts
-/dist
-/build
-
-# Prettier
-.prettierrc
+# GitHub-related files
+.github

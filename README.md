@@ -146,15 +146,10 @@ bun install
 cp .env.sample .env
 ```
 
-4. Set up your environment variables in the `.env` file:
+4. Open the .env file using a text editor (e.g., nano) and configure the environment variables according to your preferences.
 
-```
-# Discord Bot Configuration
-DISCORD_BOT_TOKEN="your_discord_bot_token_here"
-
-# Command Timeouts (in seconds)
-CREATE_TIMEOUT=300  # 5 minutes
-PING_TIMEOUT=60     # 1 minute
+```bash
+nano .env
 ```
 
 5. Initialize the database:
@@ -196,17 +191,40 @@ services:
 3. Create an `.env` file with your Discord bot token:
 
 ```
+# === Discord Bot Configuration ===
 DISCORD_BOT_TOKEN="your_discord_bot_token_here"
 
-# Command Timeouts (in seconds)
-CREATE_TIMEOUT=300  # 5 minutes
-PING_TIMEOUT=60     # 1 minute
+# === Command Timeouts (in seconds) ===
+# Timeout for create group command: 300 seconds = 5 minutes
+CREATE_TIMEOUT=300
+# Timeout for ping command: 60 seconds = 1 minute
+PING_TIMEOUT=60
+
+# === Bot Status & Activity Configuration (Optional) ===
+# Set bot status options: online, idle, dnd, invisible
+# BOT_STATUS=online
+
+# Set activity type options: playing, watching, listening, streaming, competing
+# BOT_ACTIVITY_TYPE=playing
+
+# Set activity name, e.g., "with dice"
+# BOT_ACTIVITY_NAME=with dice
+
+# For streaming activity, provide a valid Twitch or YouTube URL.
+# If streaming is selected but no URL is provided, bot will fallback to just showing the status.
+# BOT_ACTIVITY_URL=https://www.twitch.tv/username
 ```
 
 4. Create a data directory for the database and start the bot:
 
 ```bash
 mkdir -p data
+```
+
+By default, Gacha Ping runs as user 1000 inside the container. To ensure it has the necessary permissions to access the database folder, set the correct ownership:
+
+```bash
+sudo chown -R 1000:1000 ./data
 ```
 
 ```bash
@@ -247,19 +265,20 @@ The database is stored in the `./data` volume on your host machine to ensure per
 
 The bot can be configured through environment variables:
 
-| Variable            | Description                                | Default         |
-| ------------------- | ------------------------------------------ | --------------- |
-| `DISCORD_BOT_TOKEN` | Your Discord bot authentication token      | Required        |
-| `CREATE_TIMEOUT`    | Cooldown for creating groups (seconds)     | 300 (5 minutes) |
-| `PING_TIMEOUT`      | Cooldown for pinging groups (seconds)      | 60 (1 minute)   |
-| `BOT_STATUS`        | Bot's online status                        | "online"        |
-| `BOT_ACTIVITY_TYPE` | Bot's activity type                        | None            |
-| `BOT_ACTIVITY_NAME` | Text displayed for bot's activity          | None            |
-| `BOT_ACTIVITY_URL`  | URL for streaming activity type            | None            |
+| Variable            | Description                            | Default         |
+| ------------------- | -------------------------------------- | --------------- |
+| `DISCORD_BOT_TOKEN` | Your Discord bot authentication token  | Required        |
+| `CREATE_TIMEOUT`    | Cooldown for creating groups (seconds) | 300 (5 minutes) |
+| `PING_TIMEOUT`      | Cooldown for pinging groups (seconds)  | 60 (1 minute)   |
+| `BOT_STATUS`        | Bot's online status                    | "online"        |
+| `BOT_ACTIVITY_TYPE` | Bot's activity type                    | None            |
+| `BOT_ACTIVITY_NAME` | Text displayed for bot's activity      | None            |
+| `BOT_ACTIVITY_URL`  | URL for streaming activity type        | None            |
 
 ### Bot Status Options
 
 The `BOT_STATUS` variable can be set to one of the following values:
+
 - `online` - Shows the bot as online (green dot)
 - `idle` - Shows the bot as idle (yellow/orange moon)
 - `dnd` - Shows the bot as Do Not Disturb (red dot)
@@ -268,6 +287,7 @@ The `BOT_STATUS` variable can be set to one of the following values:
 ### Bot Activity Options
 
 When both `BOT_ACTIVITY_TYPE` and `BOT_ACTIVITY_NAME` are set, the bot will display an activity status. The `BOT_ACTIVITY_TYPE` can be one of:
+
 - `playing` - "Playing [BOT_ACTIVITY_NAME]"
 - `watching` - "Watching [BOT_ACTIVITY_NAME]"
 - `listening` - "Listening to [BOT_ACTIVITY_NAME]"
@@ -277,11 +297,13 @@ When both `BOT_ACTIVITY_TYPE` and `BOT_ACTIVITY_NAME` are set, the bot will disp
 **Important:** If `BOT_ACTIVITY_TYPE` is set to `streaming`, you **must** also set `BOT_ACTIVITY_URL` to a valid Twitch or YouTube URL. If streaming is selected but no URL is provided, the bot will fall back to showing only the status without any activity.
 
 **Example:**
+
 ```
 BOT_STATUS=dnd
 BOT_ACTIVITY_TYPE=playing
 BOT_ACTIVITY_NAME=with dice
 ```
+
 This will show the bot as Do Not Disturb with the status "Playing with dice".
 
 ## 💻 Development
@@ -308,20 +330,30 @@ This will open a web interface where you can browse tables, run queries, and ins
 ```
 gacha-ping/
 ├── src/
-│   ├── commands.ts       # Discord slash command definitions
-│   ├── handlers.ts       # Command handler functions
-│   ├── index.ts          # Main entry point
-│   ├── timeouts.ts       # Timeout management
+│   ├── commands.ts             # Discord slash command definitions
+│   ├── handlers.ts             # Command handler functions
+│   ├── index.ts                # Main entry point
+│   ├── timeouts.ts             # Timeout management
 │   └── db/
-│       ├── index.ts      # Database operations
-│       ├── schema.ts     # Database schema definitions
-│       └── utils.ts      # Database utilities
-├── .env.sample           # Sample environment variables
-├── drizzle.config.ts     # Drizzle ORM configuration
-├── Dockerfile            # Docker build instructions
-├── compose.yaml          # Docker Compose configuration
-├── tsconfig.json         # TypeScript configuration
-└── package.json          # Dependencies and scripts
+│       ├── index.ts            # Database operations
+│       ├── schema.ts           # Database schema definitions
+│       └── utils.ts            # Database utilities
+├── .github/
+│   └── workflows/
+│       └── docker-publish.yml  # Workflow for publishing Docker images
+├── .dockerignore               # Files to ignore in Docker builds
+├── .env.sample                 # Sample environment variables
+├── .gitignore                  # Files to ignore in Git
+├── .prettierrc                 # Prettier configuration
+├── bun.lock                    # Bun package lockfile
+├── compose.yaml                # Docker Compose configuration
+├── Dockerfile                  # Docker build instructions
+├── drizzle.config.ts           # Drizzle ORM configuration
+├── LICENSE                     # Project license (MIT)
+├── package.json                # Dependencies
+├── README.md                   # Project documentation (this file)
+├── start.sh                    # Startup script for Docker container
+└── tsconfig.json               # TypeScript configuration
 ```
 
 ## 📜 License
