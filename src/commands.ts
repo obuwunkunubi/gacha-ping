@@ -53,6 +53,31 @@ export const commands = [
     .toJSON(),
 
   /**
+   * Command to list all available groups in the server.
+   * Shows a formatted list of all groups.
+   */
+  new SlashCommandBuilder()
+    .setName('list')
+    .setDescription('List all available groups in the server')
+    .toJSON(),
+
+  /**
+   * Command to list all members in a specific group.
+   * Shows a list of users in the group without pinging them.
+   */
+  new SlashCommandBuilder()
+    .setName('members')
+    .setDescription('List all members in a group without pinging them')
+    .addStringOption((option) =>
+      option
+        .setName('name')
+        .setDescription('The name of the group')
+        .setRequired(true)
+        .setAutocomplete(true)
+    )
+    .toJSON(),
+
+  /**
    * Command to ping all members of a group.
    * Users can include an optional message with the ping notification.
    */

@@ -13,9 +13,11 @@ import { commands } from './commands';
 import {
   handleCreate,
   handleJoin,
+  handleLeave,
+  handleList,
+  handleMembers,
   handlePing,
   handleDelete,
-  handleLeave,
 } from './handlers';
 
 /**
@@ -150,6 +152,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         break;
       case 'leave':
         await handleLeave(interaction);
+        break;
+      case 'list':
+        await handleList(interaction);
+        break;
+      case 'members':
+        await handleMembers(interaction);
         break;
       case 'ping':
         await handlePing(interaction);

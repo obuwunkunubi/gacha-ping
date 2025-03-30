@@ -60,6 +60,30 @@ Leave a group you're currently in.
 /leave name:group-name
 ```
 
+### `/list`
+
+List all available groups in the server.
+
+**Example:**
+
+```
+/list
+```
+
+### `/members`
+
+List all members in a specific group without pinging them.
+
+**Parameters:**
+
+- `name`: The name of the group to view members (with autocomplete)
+
+**Example:**
+
+```
+/members name:group-name
+```
+
 ### `/ping`
 
 Ping all members of a group with an optional message.

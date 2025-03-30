@@ -12,6 +12,7 @@ import {
   updateGroupLastUsed,
   isMemberInGroup,
   removeMemberFromGroup,
+  getGuildGroups,
 } from './db';
 import { isOnTimeout, setTimeout } from './timeouts';
 
@@ -172,6 +173,111 @@ export async function handleLeave(
 }
 
 /**
+ * List all available groups in the server.
+ *
+ * @param interaction The Discord command interaction.
+ * @returns A promise that resolves when the reply has been sent.
+ */
+export async function handleList(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  const groups = await getGuildGroups(interaction.guildId!);
+
+  // If no groups found
+  if (groups.length === 0) {
+    await interaction.reply({
+      content: "❌ There are no groups in this server yet!",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Format the group list with member counts
+  const groupListPromises = groups.map(async (group) => {
+    const memberCount = (await getGroupMembers(group.id)).length;
+    return `• **${group.name}** (${memberCount} member${memberCount !== 1 ? 's' : ''})`;
+  });
+
+  const groupList = await Promise.all(groupListPromises);
+
+  const content = `**Available Groups**:\n${groupList.join('\n')}`;
+
+  // Send as ephemeral message (only visible to the command sender)
+  await interaction.reply({
+    content,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+/**
+ * List all members in a specific group.
+ *
+ * @param interaction The Discord command interaction.
+ * @returns A promise that resolves when the reply has been sent.
+ */
+export async function handleMembers(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  const groupName = interaction.options.getString('name', true);
+  const group = await getGroupByName(groupName, interaction.guildId!);
+
+  // Check if the group exists
+  if (!group) {
+    await interaction.reply({
+      content: "❌ This group doesn't exist!",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Get all member IDs in the group
+  const memberIds = await getGroupMembers(group.id);
+
+  // If no members found (shouldn't normally happen)
+  if (memberIds.length === 0) {
+    await interaction.reply({
+      content: `❌ Group **${groupName}** has no members!`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Fetch user objects for all members
+  const members = [];
+  for (const userId of memberIds) {
+    try {
+      const member = await interaction.guild?.members.fetch(userId);
+      if (member) {
+        members.push(member);
+      }
+    } catch (error) {
+      console.error(`Failed to fetch member ${userId}:`, error);
+    }
+  }
+
+  // Sort members by display name
+  members.sort((a, b) => a.user.username.localeCompare(b.user.username));
+
+  // Format the member list
+  let content: string;
+  if (members.length <= 20) {
+    // Vertical list format for fewer members
+    content = `**Members in ${groupName}**:\n` +
+      members.map(m => `• ${m.user.username}`).join('\n');
+  } else {
+    // Horizontal format for many members
+    content = `**Members in ${groupName}**:\n` +
+      members.map(m => m.user.username).join(', ');
+  }
+
+  // Send as ephemeral message (only visible to the command sender)
+  await interaction.reply({
+    content,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+/**
  * Ping all members of a group.
  *
  * @param interaction The Discord command interaction.
@@ -223,9 +329,8 @@ export async function handlePing(
   setTimeout(interaction.user.id, 'ping');
 
   // Send the ping message
-  const response = `🔔 **Group ${groupName} Alert!** 🔔\n${mentions}\n${
-    message ? `\n${message}` : ''
-  }`;
+  const response = `🔔 **Group ${groupName} Alert!** 🔔\n${mentions}\n${message ? `\n${message}` : ''
+    }`;
   await interaction.reply(response);
 }
 
@@ -239,12 +344,9 @@ export async function handleDelete(
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
   // Only server administrators can use this command
-  const isAdmin = interaction.memberPermissions?.has(
-    PermissionFlagsBits.Administrator
-  );
-  if (!isAdmin) {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
     await interaction.reply({
-      content: '❌ Only server administrators can forcefully delete groups!',
+      content: '❌ Only server administrators can use this command!',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -262,7 +364,7 @@ export async function handleDelete(
     return;
   }
 
-  // Delete the group from the database
+  // Delete the group
   const success = await deleteGroup(group.id);
   if (!success) {
     await interaction.reply({
@@ -272,7 +374,5 @@ export async function handleDelete(
     return;
   }
 
-  await interaction.reply(
-    `✅ Administrator ${interaction.user} deleted group **${groupName}**!`
-  );
+  await interaction.reply(`✅ Group **${groupName}** has been deleted!`);
 }
