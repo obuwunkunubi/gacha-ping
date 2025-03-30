@@ -321,16 +321,32 @@ export async function handlePing(
   // Update last used timestamp for the group
   await updateGroupLastUsed(group.id);
 
-  // Get all group members and format them into a list of @mentions
+  // Get all group members and fetch their usernames
   const memberIds = await getGroupMembers(group.id);
-  const mentions = memberIds.map((id) => `<@${id}>`).join(' ');
+  const members = [];
+
+  for (const id of memberIds) {
+    try {
+      const member = await interaction.guild?.members.fetch(id);
+      if (member) {
+        members.push({ id: member.id, username: member.user.username });
+      }
+    } catch (error) {
+      console.error(`Failed to fetch member ${id}:`, error);
+    }
+  }
+
+  // Sort members by username
+  members.sort((a, b) => a.username.localeCompare(b.username));
+
+  // Format mentions
+  const mentions = members.map((m) => `<@${m.id}>`).join(' ');
 
   // Set a timeout to prevent spamming pings
   setTimeout(interaction.user.id, 'ping');
 
   // Send the ping message
-  const response = `🔔 **Group ${groupName} Alert!** 🔔\n${mentions}\n${message ? `\n${message}` : ''
-    }`;
+  const response = `🔔 **Group ${groupName} Alert!** 🔔\n${mentions}\n${message ? `\n${message}` : ''}`;
   await interaction.reply(response);
 }
 
