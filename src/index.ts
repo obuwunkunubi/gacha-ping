@@ -8,7 +8,7 @@ import {
   PermissionFlagsBits,
   ActivityType,
 } from 'discord.js';
-import { getGuildGroups, getUserGuildGroups } from './db';
+import { getGuildGroups, getUserGuildGroups, runMigrations } from './db';
 import type { Group } from './db/schema';
 import { commands } from './commands';
 import {
@@ -249,6 +249,9 @@ function getActivityType(type: string | undefined): ActivityType | undefined {
       return undefined;
   }
 }
+
+await runMigrations();
+console.log('Database migrations applied.');
 
 /**
  * Login to Discord using the bot token.

@@ -1,6 +1,8 @@
 import { drizzle } from 'drizzle-orm/libsql';
+import { migrate } from 'drizzle-orm/libsql/migrator';
 import { createClient } from '@libsql/client';
 import { eq, and } from 'drizzle-orm';
+import { fileURLToPath } from 'url';
 import { groupsTable, groupMembersTable, type Group } from './schema';
 import * as schema from './schema';
 import { getDbPath } from './utils';
@@ -16,6 +18,15 @@ const client = createClient({
  * Create the database instance with the schema.
  */
 const db = drizzle(client, { schema });
+
+/**
+ * Applies any pending migrations. Runs at startup, before the bot logs in.
+ */
+export async function runMigrations(): Promise<void> {
+  await migrate(db, {
+    migrationsFolder: fileURLToPath(new URL('../../drizzle', import.meta.url)),
+  });
+}
 
 /**
  * Validates a group name.

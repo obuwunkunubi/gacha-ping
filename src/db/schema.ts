@@ -1,5 +1,10 @@
-import { relations } from 'drizzle-orm';
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { relations, sql } from 'drizzle-orm';
+import {
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 
 /**
  * Database schema for managing groups and their members in SQLite using Drizzle ORM.
@@ -10,24 +15,39 @@ import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
  * Table for storing group information.
  * Each group belongs to a specific Discord guild (server).
  */
-export const groupsTable = sqliteTable('groups', {
-  id: integer('id').primaryKey(),           // Unique identifier for each group
-  name: text('name').notNull(),             // Name of the group (must be unique per guild)
-  guildId: text('guild_id').notNull(),      // Discord guild (server) ID where the group belongs
-  creatorId: text('creator_id').notNull(),  // ID of the user who created the group
-  lastUsed: integer('last_used').notNull(), // Timestamp of the last time the group was used (used for sorting)
-});
+export const groupsTable = sqliteTable(
+  'groups',
+  {
+    id: integer('id').primaryKey(),           // Unique identifier for each group
+    name: text('name').notNull(),             // Name of the group (must be unique per guild)
+    guildId: text('guild_id').notNull(),      // Discord guild (server) ID where the group belongs
+    creatorId: text('creator_id').notNull(),  // ID of the user who created the group
+    lastUsed: integer('last_used').notNull(), // Timestamp of the last time the group was used (used for sorting)
+  },
+  (t) => [
+    uniqueIndex('groups_guild_name_unique').on(
+      t.guildId,
+      sql`${t.name} COLLATE NOCASE`
+    ),
+  ]
+);
 
 /**
  * Table for storing group members.
  * Links users to the groups they have joined.
  */
-export const groupMembersTable = sqliteTable('group_members', {
-  groupId: integer('group_id')
-    .notNull()
-    .references(() => groupsTable.id), // Foreign key linking to the groups table
-  userId: text('user_id').notNull(), // ID of the user who is a member of the group
-});
+export const groupMembersTable = sqliteTable(
+  'group_members',
+  {
+    groupId: integer('group_id')
+      .notNull()
+      .references(() => groupsTable.id), // Foreign key linking to the groups table
+    userId: text('user_id').notNull(), // ID of the user who is a member of the group
+  },
+  (t) => [
+    uniqueIndex('group_members_group_user_unique').on(t.groupId, t.userId),
+  ]
+);
 
 /**
  * Relationship: A group can have many members.
