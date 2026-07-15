@@ -1,7 +1,10 @@
 import {
-  ChatInputCommandInteraction,
+  Collection,
   MessageFlags,
   PermissionFlagsBits,
+  type ChatInputCommandInteraction,
+  type Guild,
+  type GuildMember,
 } from 'discord.js';
 import {
   createGroup,
@@ -17,16 +20,43 @@ import {
   type Db,
 } from './db';
 import { validateGroupName } from './validation';
-import { isOnTimeout, setTimeout } from './timeouts';
+import type { Cooldowns } from './cooldowns';
+
+export interface BotContext {
+  db: Db;
+  cooldowns: Cooldowns;
+}
+
+type GuildInteraction = ChatInputCommandInteraction<'cached'>;
+
+const MAX_MESSAGE_LENGTH = 2000;
+
+/**
+ * Bulk-fetches guild members by id. The gateway allows at most 100 ids per
+ * request; ids no longer in the guild are simply absent from the result.
+ */
+async function fetchMembersByIds(
+  guild: Guild,
+  ids: string[]
+): Promise<Collection<string, GuildMember>> {
+  const result = new Collection<string, GuildMember>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const fetched = await guild.members.fetch({ user: ids.slice(i, i + 100) });
+    for (const [id, member] of fetched) {
+      result.set(id, member);
+    }
+  }
+  return result;
+}
 
 export async function handleCreate(
-  db: Db,
-  interaction: ChatInputCommandInteraction
+  { db, cooldowns }: BotContext,
+  interaction: GuildInteraction
 ): Promise<void> {
-  const timeout = isOnTimeout(interaction.user.id, 'create');
-  if (timeout.onTimeout) {
+  const cooldown = cooldowns.check(interaction.user.id, 'create');
+  if (cooldown.onCooldown) {
     await interaction.reply({
-      content: `❌ You must wait ${timeout.remainingSeconds} seconds before creating another group.`,
+      content: `❌ You must wait ${cooldown.remainingSeconds} seconds before creating another group.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -46,7 +76,7 @@ export async function handleCreate(
   // No existence pre-check: the unique index is the source of truth, so a
   // concurrent create can't slip past it.
   try {
-    await createGroup(db, groupName, interaction.guildId!, interaction.user.id);
+    await createGroup(db, groupName, interaction.guildId, interaction.user.id);
   } catch (error) {
     if (isUniqueViolation(error)) {
       await interaction.reply({
@@ -58,7 +88,7 @@ export async function handleCreate(
     throw error;
   }
 
-  setTimeout(interaction.user.id, 'create');
+  cooldowns.start(interaction.user.id, 'create');
 
   await interaction.reply(
     `✅ Created group **${groupName}** with ${interaction.user} as the first member!`
@@ -66,11 +96,11 @@ export async function handleCreate(
 }
 
 export async function handleJoin(
-  db: Db,
-  interaction: ChatInputCommandInteraction
+  { db }: BotContext,
+  interaction: GuildInteraction
 ): Promise<void> {
   const groupName = interaction.options.getString('name', true);
-  const group = await getGroupByName(db, groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId);
 
   if (!group) {
     await interaction.reply({
@@ -96,11 +126,11 @@ export async function handleJoin(
 }
 
 export async function handleLeave(
-  db: Db,
-  interaction: ChatInputCommandInteraction
+  { db }: BotContext,
+  interaction: GuildInteraction
 ): Promise<void> {
   const groupName = interaction.options.getString('name', true);
-  const group = await getGroupByName(db, groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId);
 
   if (!group) {
     await interaction.reply({
@@ -137,10 +167,10 @@ export async function handleLeave(
 }
 
 export async function handleList(
-  db: Db,
-  interaction: ChatInputCommandInteraction
+  { db }: BotContext,
+  interaction: GuildInteraction
 ): Promise<void> {
-  const groups = await getGuildGroupsWithCounts(db, interaction.guildId!);
+  const groups = await getGuildGroupsWithCounts(db, interaction.guildId);
 
   if (groups.length === 0) {
     await interaction.reply({
@@ -162,11 +192,11 @@ export async function handleList(
 }
 
 export async function handleMembers(
-  db: Db,
-  interaction: ChatInputCommandInteraction
+  { db }: BotContext,
+  interaction: GuildInteraction
 ): Promise<void> {
   const groupName = interaction.options.getString('name', true);
-  const group = await getGroupByName(db, groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId);
 
   if (!group) {
     await interaction.reply({
@@ -186,45 +216,37 @@ export async function handleMembers(
     return;
   }
 
-  const members = [];
-  for (const userId of memberIds) {
-    try {
-      const member = await interaction.guild?.members.fetch(userId);
-      if (member) {
-        members.push(member);
-      }
-    } catch (error) {
-      console.error(`Failed to fetch member ${userId}:`, error);
-    }
+  // Fetching members can outlast the 3-second interaction window.
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const fetched = await fetchMembersByIds(interaction.guild, memberIds);
+  const members = [...fetched.values()].sort((a, b) =>
+    a.user.username.localeCompare(b.user.username)
+  );
+
+  if (members.length === 0) {
+    await interaction.editReply(
+      `❌ Group **${group.name}** has no members left on this server.`
+    );
+    return;
   }
 
-  members.sort((a, b) => a.user.username.localeCompare(b.user.username));
+  const names = members.map((m) => m.user.username);
+  const content =
+    `**Members in ${group.name}**:\n` +
+    (names.length <= 20 ? names.map((n) => `• ${n}`).join('\n') : names.join(', '));
 
-  let content: string;
-  if (members.length <= 20) {
-    content =
-      `**Members in ${group.name}**:\n` +
-      members.map((m) => `• ${m.user.username}`).join('\n');
-  } else {
-    content =
-      `**Members in ${group.name}**:\n` +
-      members.map((m) => m.user.username).join(', ');
-  }
-
-  await interaction.reply({
-    content,
-    flags: MessageFlags.Ephemeral,
-  });
+  await interaction.editReply(content);
 }
 
 export async function handlePing(
-  db: Db,
-  interaction: ChatInputCommandInteraction
+  { db, cooldowns }: BotContext,
+  interaction: GuildInteraction
 ): Promise<void> {
-  const timeout = isOnTimeout(interaction.user.id, 'ping');
-  if (timeout.onTimeout) {
+  const cooldown = cooldowns.check(interaction.user.id, 'ping');
+  if (cooldown.onCooldown) {
     await interaction.reply({
-      content: `❌ You must wait ${timeout.remainingSeconds} seconds before pinging another group.`,
+      content: `❌ You must wait ${cooldown.remainingSeconds} seconds before pinging another group.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -232,7 +254,7 @@ export async function handlePing(
 
   const groupName = interaction.options.getString('name', true);
   const message = interaction.options.getString('message');
-  const group = await getGroupByName(db, groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId);
 
   if (!group) {
     await interaction.reply({
@@ -250,37 +272,61 @@ export async function handlePing(
     return;
   }
 
-  await updateGroupLastUsed(db, group.id);
+  await interaction.deferReply();
 
   const memberIds = await getGroupMembers(db, group.id);
-  const members = [];
+  const fetched = await fetchMembersByIds(interaction.guild, memberIds);
+  const members = [...fetched.values()].sort((a, b) =>
+    a.user.username.localeCompare(b.user.username)
+  );
 
-  for (const id of memberIds) {
-    try {
-      const member = await interaction.guild?.members.fetch(id);
-      if (member) {
-        members.push({ id: member.id, username: member.user.username });
-      }
-    } catch (error) {
-      console.error(`Failed to fetch member ${id}:`, error);
-    }
+  if (members.length === 0) {
+    await interaction.editReply(
+      `❌ Group **${group.name}** has no members left on this server.`
+    );
+    return;
   }
 
-  members.sort((a, b) => a.username.localeCompare(b.username));
+  // Only mark the group used and burn the cooldown once the ping actually
+  // goes out.
+  cooldowns.start(interaction.user.id, 'ping');
+  await updateGroupLastUsed(db, group.id);
 
-  const mentions = members.map((m) => `<@${m.id}>`).join(' ');
+  const header = `🔔 **Group ${group.name} Alert!** 🔔`;
+  const suffix = message ? `\n\n${message}` : '';
 
-  setTimeout(interaction.user.id, 'ping');
+  // Mentions may not fit into one message; overflow goes into follow-ups.
+  const chunks: string[] = [];
+  let current = header;
+  for (const member of members) {
+    const mention = `<@${member.id}>`;
+    if (current.length + 1 + mention.length > MAX_MESSAGE_LENGTH) {
+      chunks.push(current);
+      current = mention;
+    } else {
+      current += current === header ? `\n${mention}` : ` ${mention}`;
+    }
+  }
+  if (current.length + suffix.length <= MAX_MESSAGE_LENGTH) {
+    current += suffix;
+    chunks.push(current);
+  } else {
+    chunks.push(current);
+    chunks.push(suffix.trimStart());
+  }
 
-  const response = `🔔 **Group ${group.name} Alert!** 🔔\n${mentions}\n${message ? `\n${message}` : ''}`;
-  await interaction.reply(response);
+  const allowedMentions = { parse: ['users' as const] };
+  await interaction.editReply({ content: chunks[0], allowedMentions });
+  for (const chunk of chunks.slice(1)) {
+    await interaction.followUp({ content: chunk, allowedMentions });
+  }
 }
 
 export async function handleDelete(
-  db: Db,
-  interaction: ChatInputCommandInteraction
+  { db }: BotContext,
+  interaction: GuildInteraction
 ): Promise<void> {
-  if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+  if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
     await interaction.reply({
       content: '❌ Only server administrators can use this command!',
       flags: MessageFlags.Ephemeral,
@@ -289,7 +335,7 @@ export async function handleDelete(
   }
 
   const groupName = interaction.options.getString('name', true);
-  const group = await getGroupByName(db, groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId);
 
   if (!group) {
     await interaction.reply({
