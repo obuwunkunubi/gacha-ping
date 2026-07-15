@@ -11,21 +11,18 @@ import {
   deleteGroup,
   updateGroupLastUsed,
   isMemberInGroup,
-  removeMemberFromGroup,
-  getGuildGroups,
+  removeMemberAndDeleteGroupIfEmpty,
+  getGuildGroupsWithCounts,
+  isUniqueViolation,
+  type Db,
 } from './db';
+import { validateGroupName } from './validation';
 import { isOnTimeout, setTimeout } from './timeouts';
 
-/**
- * Create a new group.
- *
- * @param interaction The Discord command interaction.
- * @returns A promise that resolves when the reply has been sent.
- */
 export async function handleCreate(
+  db: Db,
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
-  // Check if the user is on a timeout before allowing them to create a group
   const timeout = isOnTimeout(interaction.user.id, 'create');
   if (timeout.onTimeout) {
     await interaction.reply({
@@ -35,34 +32,32 @@ export async function handleCreate(
     return;
   }
 
-  // Get the group name from user input
-  const groupName = interaction.options.getString('name', true);
+  const groupName = interaction.options.getString('name', true).trim();
 
-  // Check if a group with this name already exists
-  const existingGroup = await getGroupByName(groupName, interaction.guildId!);
-  if (existingGroup) {
+  const validation = validateGroupName(groupName);
+  if (!validation.valid) {
     await interaction.reply({
-      content: '❌ A group with this name already exists!',
+      content: `❌ ${validation.reason}`,
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  // Create the group and add the user as the first member
-  const group = await createGroup(
-    groupName,
-    interaction.guildId!,
-    interaction.user.id
-  );
-  if (!group) {
-    await interaction.reply({
-      content: '❌ Failed to create group!',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
+  // No existence pre-check: the unique index is the source of truth, so a
+  // concurrent create can't slip past it.
+  try {
+    await createGroup(db, groupName, interaction.guildId!, interaction.user.id);
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      await interaction.reply({
+        content: '❌ A group with this name already exists!',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    throw error;
   }
 
-  // Set a timeout to prevent spamming group creation
   setTimeout(interaction.user.id, 'create');
 
   await interaction.reply(
@@ -70,19 +65,13 @@ export async function handleCreate(
   );
 }
 
-/**
- * Join an existing group.
- *
- * @param interaction The Discord command interaction.
- * @returns A promise that resolves when the reply has been sent.
- */
 export async function handleJoin(
+  db: Db,
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
   const groupName = interaction.options.getString('name', true);
-  const group = await getGroupByName(groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId!);
 
-  // Check if the group exists
   if (!group) {
     await interaction.reply({
       content: "❌ This group doesn't exist!",
@@ -91,8 +80,7 @@ export async function handleJoin(
     return;
   }
 
-  // Check if the user is already a member of the group
-  if (await isMemberInGroup(group.id, interaction.user.id)) {
+  if (await isMemberInGroup(db, group.id, interaction.user.id)) {
     await interaction.reply({
       content: "❌ You're already in this group!",
       flags: MessageFlags.Ephemeral,
@@ -100,34 +88,20 @@ export async function handleJoin(
     return;
   }
 
-  // Add the user to the group
-  const success = await addMemberToGroup(group.id, interaction.user.id);
-  if (!success) {
-    await interaction.reply({
-      content: '❌ Failed to join group!',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
+  await addMemberToGroup(db, group.id, interaction.user.id);
 
   await interaction.reply(
-    `✅ ${interaction.user} joined group **${groupName}**!`
+    `✅ ${interaction.user} joined group **${group.name}**!`
   );
 }
 
-/**
- * Leave a group.
- *
- * @param interaction The Discord command interaction.
- * @returns A promise that resolves when the reply has been sent.
- */
 export async function handleLeave(
+  db: Db,
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
   const groupName = interaction.options.getString('name', true);
-  const group = await getGroupByName(groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId!);
 
-  // Check if the group exists
   if (!group) {
     await interaction.reply({
       content: "❌ This group doesn't exist!",
@@ -136,8 +110,7 @@ export async function handleLeave(
     return;
   }
 
-  // Check if the user is a member of the group
-  if (!(await isMemberInGroup(group.id, interaction.user.id))) {
+  if (!(await isMemberInGroup(db, group.id, interaction.user.id))) {
     await interaction.reply({
       content: "❌ You're not a member of this group!",
       flags: MessageFlags.Ephemeral,
@@ -145,83 +118,56 @@ export async function handleLeave(
     return;
   }
 
-  // Get current members before removing the user
-  const currentMembers = await getGroupMembers(group.id);
+  const { groupDeleted } = await removeMemberAndDeleteGroupIfEmpty(
+    db,
+    group.id,
+    interaction.user.id
+  );
 
-  // Remove the user from the group
-  const success = await removeMemberFromGroup(group.id, interaction.user.id);
-  if (!success) {
-    await interaction.reply({
-      content: '❌ Failed to leave group!',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  // If the last member left, delete the group
-  if (currentMembers.length === 1) {
-    await deleteGroup(group.id);
+  if (groupDeleted) {
     await interaction.reply(
-      `✅ ${interaction.user} left and group **${groupName}** was deleted as it has no more members!`
+      `✅ ${interaction.user} left and group **${group.name}** was deleted as it has no more members!`
     );
     return;
   }
 
   await interaction.reply(
-    `✅ ${interaction.user} left group **${groupName}**!`
+    `✅ ${interaction.user} left group **${group.name}**!`
   );
 }
 
-/**
- * List all available groups in the server.
- *
- * @param interaction The Discord command interaction.
- * @returns A promise that resolves when the reply has been sent.
- */
 export async function handleList(
+  db: Db,
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
-  const groups = await getGuildGroups(interaction.guildId!);
+  const groups = await getGuildGroupsWithCounts(db, interaction.guildId!);
 
-  // If no groups found
   if (groups.length === 0) {
     await interaction.reply({
-      content: "❌ There are no groups in this server yet!",
+      content: '❌ There are no groups in this server yet!',
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  // Format the group list with member counts
-  const groupListPromises = groups.map(async (group) => {
-    const memberCount = (await getGroupMembers(group.id)).length;
-    return `• **${group.name}** (${memberCount} member${memberCount !== 1 ? 's' : ''})`;
-  });
+  const groupList = groups.map(
+    (group) =>
+      `• **${group.name}** (${group.memberCount} member${group.memberCount !== 1 ? 's' : ''})`
+  );
 
-  const groupList = await Promise.all(groupListPromises);
-
-  const content = `**Available Groups**:\n${groupList.join('\n')}`;
-
-  // Send as ephemeral message (only visible to the command sender)
   await interaction.reply({
-    content,
+    content: `**Available Groups**:\n${groupList.join('\n')}`,
     flags: MessageFlags.Ephemeral,
   });
 }
 
-/**
- * List all members in a specific group.
- *
- * @param interaction The Discord command interaction.
- * @returns A promise that resolves when the reply has been sent.
- */
 export async function handleMembers(
+  db: Db,
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
   const groupName = interaction.options.getString('name', true);
-  const group = await getGroupByName(groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId!);
 
-  // Check if the group exists
   if (!group) {
     await interaction.reply({
       content: "❌ This group doesn't exist!",
@@ -230,19 +176,16 @@ export async function handleMembers(
     return;
   }
 
-  // Get all member IDs in the group
-  const memberIds = await getGroupMembers(group.id);
+  const memberIds = await getGroupMembers(db, group.id);
 
-  // If no members found (shouldn't normally happen)
   if (memberIds.length === 0) {
     await interaction.reply({
-      content: `❌ Group **${groupName}** has no members!`,
+      content: `❌ Group **${group.name}** has no members!`,
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  // Fetch user objects for all members
   const members = [];
   for (const userId of memberIds) {
     try {
@@ -255,38 +198,29 @@ export async function handleMembers(
     }
   }
 
-  // Sort members by display name
   members.sort((a, b) => a.user.username.localeCompare(b.user.username));
 
-  // Format the member list
   let content: string;
   if (members.length <= 20) {
-    // Vertical list format for fewer members
-    content = `**Members in ${groupName}**:\n` +
-      members.map(m => `• ${m.user.username}`).join('\n');
+    content =
+      `**Members in ${group.name}**:\n` +
+      members.map((m) => `• ${m.user.username}`).join('\n');
   } else {
-    // Horizontal format for many members
-    content = `**Members in ${groupName}**:\n` +
-      members.map(m => m.user.username).join(', ');
+    content =
+      `**Members in ${group.name}**:\n` +
+      members.map((m) => m.user.username).join(', ');
   }
 
-  // Send as ephemeral message (only visible to the command sender)
   await interaction.reply({
     content,
     flags: MessageFlags.Ephemeral,
   });
 }
 
-/**
- * Ping all members of a group.
- *
- * @param interaction The Discord command interaction.
- * @returns A promise that resolves when the reply has been sent.
- */
 export async function handlePing(
+  db: Db,
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
-  // Check if the user is on a timeout before allowing another ping
   const timeout = isOnTimeout(interaction.user.id, 'ping');
   if (timeout.onTimeout) {
     await interaction.reply({
@@ -298,9 +232,8 @@ export async function handlePing(
 
   const groupName = interaction.options.getString('name', true);
   const message = interaction.options.getString('message');
-  const group = await getGroupByName(groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId!);
 
-  // Check if the group exists
   if (!group) {
     await interaction.reply({
       content: "❌ This group doesn't exist!",
@@ -309,20 +242,17 @@ export async function handlePing(
     return;
   }
 
-  // Check if the user is a member of the group
-  if (!(await isMemberInGroup(group.id, interaction.user.id))) {
+  if (!(await isMemberInGroup(db, group.id, interaction.user.id))) {
     await interaction.reply({
-      content: "❌ You must be a member of this group to ping it!",
+      content: '❌ You must be a member of this group to ping it!',
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  // Update last used timestamp for the group
-  await updateGroupLastUsed(group.id);
+  await updateGroupLastUsed(db, group.id);
 
-  // Get all group members and fetch their usernames
-  const memberIds = await getGroupMembers(group.id);
+  const memberIds = await getGroupMembers(db, group.id);
   const members = [];
 
   for (const id of memberIds) {
@@ -336,30 +266,20 @@ export async function handlePing(
     }
   }
 
-  // Sort members by username
   members.sort((a, b) => a.username.localeCompare(b.username));
 
-  // Format mentions
   const mentions = members.map((m) => `<@${m.id}>`).join(' ');
 
-  // Set a timeout to prevent spamming pings
   setTimeout(interaction.user.id, 'ping');
 
-  // Send the ping message
-  const response = `🔔 **Group ${groupName} Alert!** 🔔\n${mentions}\n${message ? `\n${message}` : ''}`;
+  const response = `🔔 **Group ${group.name} Alert!** 🔔\n${mentions}\n${message ? `\n${message}` : ''}`;
   await interaction.reply(response);
 }
 
-/**
- * Delete a group (server administrators only).
- *
- * @param interaction The Discord command interaction.
- * @returns A promise that resolves when the reply has been sent.
- */
 export async function handleDelete(
+  db: Db,
   interaction: ChatInputCommandInteraction
 ): Promise<void> {
-  // Only server administrators can use this command
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
     await interaction.reply({
       content: '❌ Only server administrators can use this command!',
@@ -369,9 +289,8 @@ export async function handleDelete(
   }
 
   const groupName = interaction.options.getString('name', true);
-  const group = await getGroupByName(groupName, interaction.guildId!);
+  const group = await getGroupByName(db, groupName, interaction.guildId!);
 
-  // Check if the group exists
   if (!group) {
     await interaction.reply({
       content: "❌ This group doesn't exist!",
@@ -380,15 +299,7 @@ export async function handleDelete(
     return;
   }
 
-  // Delete the group
-  const success = await deleteGroup(group.id);
-  if (!success) {
-    await interaction.reply({
-      content: '❌ Failed to delete group!',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
+  await deleteGroup(db, group.id);
 
-  await interaction.reply(`✅ Group **${groupName}** has been deleted!`);
+  await interaction.reply(`✅ Group **${group.name}** has been deleted!`);
 }

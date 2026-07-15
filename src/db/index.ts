@@ -1,317 +1,203 @@
-import { drizzle } from 'drizzle-orm/libsql';
-import { migrate } from 'drizzle-orm/libsql/migrator';
-import { createClient } from '@libsql/client';
-import { eq, and } from 'drizzle-orm';
-import { fileURLToPath } from 'url';
+import { eq, and, desc, count, inArray, sql } from 'drizzle-orm';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { groupsTable, groupMembersTable, type Group } from './schema';
-import * as schema from './schema';
-import { getDbPath } from './utils';
+import type { Db } from './client';
+
+export { createDb, runMigrations, type Db } from './client';
+
+// Query errors are not caught here; they propagate to the interaction
+// router's error handler. An undefined/empty result always means "not found".
 
 /**
- * Initialize the database client with the connection URL.
+ * Detects a UNIQUE constraint violation. drizzle-orm wraps driver errors in
+ * DrizzleQueryError, so the LibsqlError has to be read from `cause`.
  */
-const client = createClient({
-  url: getDbPath(),
-});
-
-/**
- * Create the database instance with the schema.
- */
-const db = drizzle(client, { schema });
-
-/**
- * Applies any pending migrations. Runs at startup, before the bot logs in.
- */
-export async function runMigrations(): Promise<void> {
-  await migrate(db, {
-    migrationsFolder: fileURLToPath(new URL('../../drizzle', import.meta.url)),
-  });
+export function isUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof DrizzleQueryError)) return false;
+  const cause = error.cause as { code?: string; message?: string } | undefined;
+  return (
+    (cause?.code?.startsWith('SQLITE_CONSTRAINT') ?? false) &&
+    (cause?.message?.includes('UNIQUE constraint failed') ?? false)
+  );
 }
 
 /**
- * Validates a group name.
- *
- * @param name The name to validate.
- * @returns An object indicating if the name is valid and the reason if invalid.
- */
-export function validateGroupName(name: string): {
-  valid: boolean;
-  reason?: string;
-} {
-  // Check length (between 2 and 32 characters)
-  if (name.length < 2 || name.length > 32) {
-    return {
-      valid: false,
-      reason: 'Group name must be between 2 and 32 characters long',
-    };
-  }
-
-  // Allow only alphanumeric characters, spaces, hyphens, and underscores
-  const validNameRegex = /^[a-zA-Z0-9\s\-_]+$/;
-  if (!validNameRegex.test(name)) {
-    return {
-      valid: false,
-      reason:
-        'Group name can only contain letters, numbers, spaces, hyphens, and underscores',
-    };
-  }
-
-  return { valid: true };
-}
-
-/**
- * Creates a new group in the database.
- *
- * @param name The name of the group.
- * @param guildId The Discord guild ID where the group belongs.
- * @param creatorId The ID of the user creating the group.
- * @returns The created group or undefined if creation failed.
+ * Creates a group with its creator as the first member. Throws a unique
+ * violation if the name is already taken in the guild (case-insensitive).
  */
 export async function createGroup(
+  db: Db,
   name: string,
   guildId: string,
   creatorId: string
-): Promise<Group | undefined> {
-  // Trim the name before validation
-  const trimmedName = name.trim();
-
-  const validation = validateGroupName(trimmedName);
-  if (!validation.valid) {
-    console.error('Invalid group name:', validation.reason);
-    return undefined;
-  }
-
-  try {
-    const [group] = await db
+): Promise<Group> {
+  return db.transaction(async (tx) => {
+    const [group] = await tx
       .insert(groupsTable)
-      .values({
-        name: trimmedName,
-        guildId,
-        creatorId,
-        lastUsed: Date.now(),
-      })
+      .values({ name, guildId, creatorId, lastUsed: Date.now() })
       .returning();
-
-    if (group) {
-      // Add creator as first member
-      await db.insert(groupMembersTable).values({
-        groupId: group.id,
-        userId: creatorId,
-      });
-    }
-
+    if (!group) throw new Error('Insert returned no row');
+    await tx
+      .insert(groupMembersTable)
+      .values({ groupId: group.id, userId: creatorId });
     return group;
-  } catch (error) {
-    console.error('Error creating group:', error);
-    return undefined;
-  }
+  });
 }
 
-/**
- * Retrieves a group by its name and guild ID.
- *
- * @param name The name of the group.
- * @param guildId The Discord guild ID.
- * @returns The group if found, otherwise undefined.
- */
+/** Case-insensitive lookup, matching the unique index's collation. */
 export async function getGroupByName(
+  db: Db,
   name: string,
   guildId: string
 ): Promise<Group | undefined> {
-  try {
-    return await db.query.groupsTable.findFirst({
-      where: and(eq(groupsTable.name, name), eq(groupsTable.guildId, guildId)),
-    });
-  } catch (error) {
-    console.error('Error getting group:', error);
-    return undefined;
-  }
-}
-
-/**
- * Retrieves all groups for a specific guild.
- *
- * @param guildId The Discord guild ID.
- * @returns Array of groups in the guild sorted by last used timestamp.
- */
-export async function getGuildGroups(guildId: string): Promise<Group[]> {
-  try {
-    return await db
-      .select()
-      .from(groupsTable)
-      .where(eq(groupsTable.guildId, guildId))
-      .orderBy(groupsTable.lastUsed);
-  } catch (error) {
-    console.error('Error getting guild groups:', error);
-    return [];
-  }
-}
-
-/**
- * Retrieves groups for a specific user in a specific guild.
- *
- * @param guildId The Discord guild ID.
- * @param userId The Discord user ID.
- * @returns Array of groups the user is in, sorted by last used timestamp.
- */
-export async function getUserGuildGroups(guildId: string, userId: string): Promise<Group[]> {
-  try {
-    const result = await db
-      .select({
-        id: groupsTable.id,
-        name: groupsTable.name,
-        guildId: groupsTable.guildId,
-        creatorId: groupsTable.creatorId,
-        lastUsed: groupsTable.lastUsed,
-      })
-      .from(groupsTable)
-      .innerJoin(groupMembersTable, eq(groupsTable.id, groupMembersTable.groupId)) // Join groups with group members
-      .where(
-        and(
-          eq(groupsTable.guildId, guildId), // Filter by guild ID
-          eq(groupMembersTable.userId, userId) // Filter by user ID
-        )
+  const rows = await db
+    .select()
+    .from(groupsTable)
+    .where(
+      and(
+        eq(groupsTable.guildId, guildId),
+        sql`${groupsTable.name} = ${name} COLLATE NOCASE`
       )
-      .orderBy(groupsTable.lastUsed); // Sort by last used timestamp
-
-    // Map the result to an array of Group objects
-    return result.map(row => ({
-      id: row.id,
-      name: row.name,
-      guildId: row.guildId,
-      creatorId: row.creatorId,
-      lastUsed: row.lastUsed,
-    }));
-  } catch (error) {
-    console.error('Error getting user guild groups:', error);
-    return [];
-  }
+    )
+    .limit(1);
+  return rows[0];
 }
 
-/**
- * Updates the last used timestamp for a group.
- *
- * @param groupId The ID of the group to update.
- * @returns A boolean indicating success or failure.
- */
-export async function updateGroupLastUsed(groupId: number): Promise<boolean> {
-  try {
-    await db
-      .update(groupsTable)
-      .set({ lastUsed: Date.now() })
-      .where(eq(groupsTable.id, groupId));
-    return true;
-  } catch (error) {
-    console.error('Error updating group last used:', error);
-    return false;
-  }
+export async function getGuildGroups(db: Db, guildId: string): Promise<Group[]> {
+  return db
+    .select()
+    .from(groupsTable)
+    .where(eq(groupsTable.guildId, guildId))
+    .orderBy(desc(groupsTable.lastUsed));
 }
 
-/**
- * Deletes a group from the database.
- *
- * @param groupId The ID of the group to delete.
- * @returns A boolean indicating success or failure.
- */
-export async function deleteGroup(groupId: number): Promise<boolean> {
-  try {
-    // Delete members first due to foreign key constraint
-    await db
+export async function getUserGuildGroups(
+  db: Db,
+  guildId: string,
+  userId: string
+): Promise<Group[]> {
+  const rows = await db
+    .select({ group: groupsTable })
+    .from(groupsTable)
+    .innerJoin(
+      groupMembersTable,
+      eq(groupsTable.id, groupMembersTable.groupId)
+    )
+    .where(
+      and(
+        eq(groupsTable.guildId, guildId),
+        eq(groupMembersTable.userId, userId)
+      )
+    )
+    .orderBy(desc(groupsTable.lastUsed));
+  return rows.map((r) => r.group);
+}
+
+export type GroupWithCount = Group & { memberCount: number };
+
+export async function getGuildGroupsWithCounts(
+  db: Db,
+  guildId: string
+): Promise<GroupWithCount[]> {
+  const rows = await db
+    .select({ group: groupsTable, memberCount: count(groupMembersTable.userId) })
+    .from(groupsTable)
+    .leftJoin(
+      groupMembersTable,
+      eq(groupsTable.id, groupMembersTable.groupId)
+    )
+    .where(eq(groupsTable.guildId, guildId))
+    .groupBy(groupsTable.id)
+    .orderBy(desc(groupsTable.lastUsed));
+  return rows.map((r) => ({ ...r.group, memberCount: r.memberCount }));
+}
+
+export async function updateGroupLastUsed(
+  db: Db,
+  groupId: number
+): Promise<void> {
+  await db
+    .update(groupsTable)
+    .set({ lastUsed: Date.now() })
+    .where(eq(groupsTable.id, groupId));
+}
+
+export async function deleteGroup(db: Db, groupId: number): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
       .delete(groupMembersTable)
       .where(eq(groupMembersTable.groupId, groupId));
-
-    await db.delete(groupsTable).where(eq(groupsTable.id, groupId));
-    return true;
-  } catch (error) {
-    console.error('Error deleting group:', error);
-    return false;
-  }
+    await tx.delete(groupsTable).where(eq(groupsTable.id, groupId));
+  });
 }
 
-/**
- * Retrieves all members of a specific group.
- *
- * @param groupId The ID of the group.
- * @returns An array of user IDs who are members of the group.
- */
-export async function getGroupMembers(groupId: number): Promise<string[]> {
-  try {
-    const members = await db
-      .select({ userId: groupMembersTable.userId })
-      .from(groupMembersTable)
-      .where(eq(groupMembersTable.groupId, groupId));
-    return members.map((m) => m.userId);
-  } catch (error) {
-    console.error('Error getting group members:', error);
-    return [];
-  }
+export async function getGroupMembers(
+  db: Db,
+  groupId: number
+): Promise<string[]> {
+  const members = await db
+    .select({ userId: groupMembersTable.userId })
+    .from(groupMembersTable)
+    .where(eq(groupMembersTable.groupId, groupId));
+  return members.map((m) => m.userId);
 }
 
-/**
- * Adds a user as a member to a group.
- *
- * @param groupId The ID of the group.
- * @param userId The ID of the user to add.
- * @returns A boolean indicating success or failure.
- */
 export async function addMemberToGroup(
+  db: Db,
   groupId: number,
   userId: string
-): Promise<boolean> {
-  try {
-    await db
-      .insert(groupMembersTable)
-      .values({ groupId, userId })
-      .onConflictDoNothing();
-    return true;
-  } catch (error) {
-    console.error('Error adding member to group:', error);
-    return false;
-  }
+): Promise<void> {
+  await db
+    .insert(groupMembersTable)
+    .values({ groupId, userId })
+    .onConflictDoNothing();
 }
 
-/**
- * Checks if a user is a member of a specific group.
- *
- * @param groupId The ID of the group.
- * @param userId The ID of the user to check.
- * @returns A boolean indicating if the user is a member.
- */
 export async function isMemberInGroup(
+  db: Db,
   groupId: number,
   userId: string
 ): Promise<boolean> {
-  try {
-    const member = await db
-      .select()
-      .from(groupMembersTable)
-      .where(
-        and(
-          eq(groupMembersTable.groupId, groupId),
-          eq(groupMembersTable.userId, userId)
-        )
+  const member = await db
+    .select({ userId: groupMembersTable.userId })
+    .from(groupMembersTable)
+    .where(
+      and(
+        eq(groupMembersTable.groupId, groupId),
+        eq(groupMembersTable.userId, userId)
       )
-      .limit(1);
-    return member.length > 0;
-  } catch (error) {
-    console.error('Error checking group membership:', error);
-    return false;
-  }
+    )
+    .limit(1);
+  return member.length > 0;
+}
+
+export async function removeMembersFromGroup(
+  db: Db,
+  groupId: number,
+  userIds: string[]
+): Promise<void> {
+  if (userIds.length === 0) return;
+  await db
+    .delete(groupMembersTable)
+    .where(
+      and(
+        eq(groupMembersTable.groupId, groupId),
+        inArray(groupMembersTable.userId, userIds)
+      )
+    );
 }
 
 /**
- * Removes a user from a group.
- *
- * @param groupId The ID of the group.
- * @param userId The ID of the user to remove.
- * @returns A boolean indicating success or failure.
+ * Removes a member and deletes the group if nobody is left. Done in one
+ * transaction so concurrent leaves can't leave an empty group behind.
  */
-export async function removeMemberFromGroup(
+export async function removeMemberAndDeleteGroupIfEmpty(
+  db: Db,
   groupId: number,
   userId: string
-): Promise<boolean> {
-  try {
-    await db
+): Promise<{ groupDeleted: boolean }> {
+  return db.transaction(async (tx) => {
+    await tx
       .delete(groupMembersTable)
       .where(
         and(
@@ -319,9 +205,77 @@ export async function removeMemberFromGroup(
           eq(groupMembersTable.userId, userId)
         )
       );
-    return true;
-  } catch (error) {
-    console.error('Error removing member from group:', error);
-    return false;
-  }
+    const [row] = await tx
+      .select({ n: count() })
+      .from(groupMembersTable)
+      .where(eq(groupMembersTable.groupId, groupId));
+    if ((row?.n ?? 0) === 0) {
+      await tx.delete(groupsTable).where(eq(groupsTable.id, groupId));
+      return { groupDeleted: true };
+    }
+    return { groupDeleted: false };
+  });
+}
+
+/**
+ * Drops all of a user's memberships in a guild and deletes any groups left
+ * empty. Used when a member leaves the Discord server.
+ */
+export async function removeUserFromGuildGroups(
+  db: Db,
+  guildId: string,
+  userId: string
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: groupsTable.id })
+      .from(groupsTable)
+      .innerJoin(
+        groupMembersTable,
+        eq(groupsTable.id, groupMembersTable.groupId)
+      )
+      .where(
+        and(
+          eq(groupsTable.guildId, guildId),
+          eq(groupMembersTable.userId, userId)
+        )
+      );
+    const groupIds = rows.map((r) => r.id);
+    if (groupIds.length === 0) return;
+
+    await tx
+      .delete(groupMembersTable)
+      .where(
+        and(
+          inArray(groupMembersTable.groupId, groupIds),
+          eq(groupMembersTable.userId, userId)
+        )
+      );
+
+    const remaining = await tx
+      .select({ groupId: groupMembersTable.groupId })
+      .from(groupMembersTable)
+      .where(inArray(groupMembersTable.groupId, groupIds));
+    const nonEmpty = new Set(remaining.map((r) => r.groupId));
+    const emptyIds = groupIds.filter((id) => !nonEmpty.has(id));
+    if (emptyIds.length > 0) {
+      await tx.delete(groupsTable).where(inArray(groupsTable.id, emptyIds));
+    }
+  });
+}
+
+/** Purges everything for a guild. Used when the bot is removed from it. */
+export async function deleteGuildData(db: Db, guildId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: groupsTable.id })
+      .from(groupsTable)
+      .where(eq(groupsTable.guildId, guildId));
+    const groupIds = rows.map((r) => r.id);
+    if (groupIds.length === 0) return;
+    await tx
+      .delete(groupMembersTable)
+      .where(inArray(groupMembersTable.groupId, groupIds));
+    await tx.delete(groupsTable).where(inArray(groupsTable.id, groupIds));
+  });
 }

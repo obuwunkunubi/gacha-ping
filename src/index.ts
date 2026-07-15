@@ -8,7 +8,12 @@ import {
   PermissionFlagsBits,
   ActivityType,
 } from 'discord.js';
-import { getGuildGroups, getUserGuildGroups, runMigrations } from './db';
+import {
+  createDb,
+  getGuildGroups,
+  getUserGuildGroups,
+  runMigrations,
+} from './db';
 import type { Group } from './db/schema';
 import { commands } from './commands';
 import {
@@ -20,6 +25,8 @@ import {
   handlePing,
   handleDelete,
 } from './handlers';
+
+const db = createDb();
 
 /**
  * Initialize the Discord client with the necessary intents.
@@ -153,11 +160,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (commandName === 'join') {
       // For join command, get all guild groups
-      groups = await getGuildGroups(interaction.guildId!);
+      groups = await getGuildGroups(db, interaction.guildId!);
 
       // Filter out groups the user is already in (users need to see groups they're not in)
       if (groups.length > 0) {
         const userGroups = await getUserGuildGroups(
+          db,
           interaction.guildId!,
           interaction.user.id
         );
@@ -173,12 +181,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } else if (commandName === 'ping' || commandName === 'leave') {
       // For ping and leave commands, show only groups the user is in
       groups = await getUserGuildGroups(
+        db,
         interaction.guildId!,
         interaction.user.id
       );
     } else {
       // For any other command, show all groups
-      groups = await getGuildGroups(interaction.guildId!);
+      groups = await getGuildGroups(db, interaction.guildId!);
     }
 
     // Filter groups based on the focused value (autocomplete search)
@@ -199,25 +208,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     switch (interaction.commandName) {
       case 'create':
-        await handleCreate(interaction);
+        await handleCreate(db, interaction);
         break;
       case 'join':
-        await handleJoin(interaction);
+        await handleJoin(db, interaction);
         break;
       case 'leave':
-        await handleLeave(interaction);
+        await handleLeave(db, interaction);
         break;
       case 'list':
-        await handleList(interaction);
+        await handleList(db, interaction);
         break;
       case 'members':
-        await handleMembers(interaction);
+        await handleMembers(db, interaction);
         break;
       case 'ping':
-        await handlePing(interaction);
+        await handlePing(db, interaction);
         break;
       case 'delete':
-        await handleDelete(interaction);
+        await handleDelete(db, interaction);
         break;
     }
   } catch (error) {
@@ -250,7 +259,7 @@ function getActivityType(type: string | undefined): ActivityType | undefined {
   }
 }
 
-await runMigrations();
+await runMigrations(db);
 console.log('Database migrations applied.');
 
 /**
