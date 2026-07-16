@@ -1,5 +1,6 @@
-import { eq, and, desc, count, inArray, sql } from 'drizzle-orm';
+import { eq, and, desc, count, exists, inArray, sql } from 'drizzle-orm';
 import { DrizzleQueryError } from 'drizzle-orm/errors';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { groupsTable, groupMembersTable, type Group } from './schema';
 import type { Db } from './client';
 
@@ -95,10 +96,33 @@ export async function getUserGuildGroups(
 
 export type GroupWithCount = Group & { memberCount: number };
 
+/**
+ * Groups of a guild with their member counts in one query. When `memberId`
+ * is given, only groups that user belongs to are returned.
+ */
 export async function getGuildGroupsWithCounts(
   db: Db,
-  guildId: string
+  guildId: string,
+  memberId?: string
 ): Promise<GroupWithCount[]> {
+  const membership = alias(groupMembersTable, 'membership');
+  const conditions = [eq(groupsTable.guildId, guildId)];
+  if (memberId !== undefined) {
+    conditions.push(
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(membership)
+          .where(
+            and(
+              eq(membership.groupId, groupsTable.id),
+              eq(membership.userId, memberId)
+            )
+          )
+      )
+    );
+  }
+
   const rows = await db
     .select({ group: groupsTable, memberCount: count(groupMembersTable.userId) })
     .from(groupsTable)
@@ -106,7 +130,7 @@ export async function getGuildGroupsWithCounts(
       groupMembersTable,
       eq(groupsTable.id, groupMembersTable.groupId)
     )
-    .where(eq(groupsTable.guildId, guildId))
+    .where(and(...conditions))
     .groupBy(groupsTable.id)
     .orderBy(desc(groupsTable.lastUsed));
   return rows.map((r) => ({ ...r.group, memberCount: r.memberCount }));
@@ -185,6 +209,27 @@ export async function removeMembersFromGroup(
         inArray(groupMembersTable.userId, userIds)
       )
     );
+}
+
+/**
+ * Deletes a group only if it has no members. The recount happens inside the
+ * transaction so a concurrent join can't be wiped out.
+ */
+export async function deleteGroupIfEmpty(
+  db: Db,
+  groupId: number
+): Promise<{ deleted: boolean }> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ n: count() })
+      .from(groupMembersTable)
+      .where(eq(groupMembersTable.groupId, groupId));
+    if ((row?.n ?? 0) > 0) {
+      return { deleted: false };
+    }
+    await tx.delete(groupsTable).where(eq(groupsTable.id, groupId));
+    return { deleted: true };
+  });
 }
 
 /**

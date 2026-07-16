@@ -57,6 +57,12 @@ export const commands = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('mygroups')
+    .setDescription("List the groups you're a member of")
+    .setContexts(InteractionContextType.Guild)
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('members')
     .setDescription('List all members in a group without pinging them')
     .setContexts(InteractionContextType.Guild)

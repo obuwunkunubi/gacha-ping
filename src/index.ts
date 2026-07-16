@@ -10,8 +10,10 @@ import {
 } from 'discord.js';
 import {
   createDb,
+  deleteGuildData,
   getGuildGroups,
   getUserGuildGroups,
+  removeUserFromGuildGroups,
   runMigrations,
 } from './db';
 import type { Group } from './db/schema';
@@ -22,6 +24,7 @@ import {
   handleJoin,
   handleLeave,
   handleList,
+  handleMyGroups,
   handleMembers,
   handlePing,
   handleDelete,
@@ -65,6 +68,25 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log('Registered application commands.');
   } catch (error) {
     console.error('Error registering slash commands:', error);
+  }
+});
+
+client.on(Events.GuildMemberRemove, async (member) => {
+  try {
+    await removeUserFromGuildGroups(db, member.guild.id, member.id);
+  } catch (error) {
+    console.error(
+      `Error cleaning up groups for departed member ${member.id}:`,
+      error
+    );
+  }
+});
+
+client.on(Events.GuildDelete, async (guild) => {
+  try {
+    await deleteGuildData(db, guild.id);
+  } catch (error) {
+    console.error(`Error cleaning up data for guild ${guild.id}:`, error);
   }
 });
 
@@ -150,6 +172,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         break;
       case 'list':
         await handleList(ctx, interaction);
+        break;
+      case 'mygroups':
+        await handleMyGroups(ctx, interaction);
         break;
       case 'members':
         await handleMembers(ctx, interaction);

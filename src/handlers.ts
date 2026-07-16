@@ -15,6 +15,8 @@ import {
   updateGroupLastUsed,
   isMemberInGroup,
   removeMemberAndDeleteGroupIfEmpty,
+  removeMembersFromGroup,
+  deleteGroupIfEmpty,
   getGuildGroupsWithCounts,
   isUniqueViolation,
   type Db,
@@ -47,6 +49,26 @@ async function fetchMembersByIds(
     }
   }
   return result;
+}
+
+/**
+ * Users who left the server can linger in the db (they were stored before the
+ * GuildMemberRemove listener existed, or the bot was offline when they left).
+ * Drop them once a fetch proves they're gone, and remove the group if that
+ * leaves it empty.
+ */
+async function pruneDepartedMembers(
+  db: Db,
+  groupId: number,
+  memberIds: string[],
+  fetched: Collection<string, GuildMember>
+): Promise<void> {
+  const departed = memberIds.filter((id) => !fetched.has(id));
+  if (departed.length === 0) return;
+  await removeMembersFromGroup(db, groupId, departed);
+  if (fetched.size === 0) {
+    await deleteGroupIfEmpty(db, groupId);
+  }
 }
 
 export async function handleCreate(
@@ -191,6 +213,36 @@ export async function handleList(
   });
 }
 
+export async function handleMyGroups(
+  { db }: BotContext,
+  interaction: GuildInteraction
+): Promise<void> {
+  const groups = await getGuildGroupsWithCounts(
+    db,
+    interaction.guildId,
+    interaction.user.id
+  );
+
+  if (groups.length === 0) {
+    await interaction.reply({
+      content:
+        "❌ You're not in any groups on this server yet. Try `/join` or `/create`.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const groupList = groups.map(
+    (group) =>
+      `• **${group.name}** (${group.memberCount} member${group.memberCount !== 1 ? 's' : ''})`
+  );
+
+  await interaction.reply({
+    content: `**Your Groups**:\n${groupList.join('\n')}`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
 export async function handleMembers(
   { db }: BotContext,
   interaction: GuildInteraction
@@ -220,13 +272,15 @@ export async function handleMembers(
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const fetched = await fetchMembersByIds(interaction.guild, memberIds);
+  await pruneDepartedMembers(db, group.id, memberIds, fetched);
+
   const members = [...fetched.values()].sort((a, b) =>
     a.user.username.localeCompare(b.user.username)
   );
 
   if (members.length === 0) {
     await interaction.editReply(
-      `❌ Group **${group.name}** has no members left on this server.`
+      `❌ Group **${group.name}** had no members left on this server and was removed.`
     );
     return;
   }
@@ -276,13 +330,15 @@ export async function handlePing(
 
   const memberIds = await getGroupMembers(db, group.id);
   const fetched = await fetchMembersByIds(interaction.guild, memberIds);
+  await pruneDepartedMembers(db, group.id, memberIds, fetched);
+
   const members = [...fetched.values()].sort((a, b) =>
     a.user.username.localeCompare(b.user.username)
   );
 
   if (members.length === 0) {
     await interaction.editReply(
-      `❌ Group **${group.name}** has no members left on this server.`
+      `❌ Group **${group.name}** had no members left on this server and was removed.`
     );
     return;
   }
