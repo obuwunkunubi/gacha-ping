@@ -17,6 +17,7 @@ everyone in it.
 | `/mygroups` | The groups you're a member of. |
 | `/members name:` | List a group's members without pinging them. |
 | `/ping name: [message:]` | Ping every member of a group, optionally with a message. Members only. |
+| `/rename name: newname:` | Rename a group. Its creator or a server administrator only. |
 | `/delete name:` | Delete a group. Server administrators only. |
 
 Group names are 2-32 characters (letters, numbers, spaces, hyphens,

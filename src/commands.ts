@@ -97,6 +97,28 @@ export const commands = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('rename')
+    .setDescription('Rename a group (its creator or a server administrator)')
+    .setContexts(InteractionContextType.Guild)
+    .addStringOption((option) =>
+      option
+        .setName('name')
+        .setDescription('The current name of the group')
+        .setRequired(true)
+        .setMaxLength(32)
+        .setAutocomplete(true)
+    )
+    .addStringOption((option) =>
+      option
+        .setName('newname')
+        .setDescription('The new name for the group')
+        .setRequired(true)
+        .setMinLength(2)
+        .setMaxLength(32)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('delete')
     .setDescription('Force delete a group (server administrators only)')
     .setContexts(InteractionContextType.Guild)

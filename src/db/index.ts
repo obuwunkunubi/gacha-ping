@@ -136,6 +136,21 @@ export async function getGuildGroupsWithCounts(
   return rows.map((r) => ({ ...r.group, memberCount: r.memberCount }));
 }
 
+/**
+ * Renames a group. Throws a unique violation if the new name is already
+ * taken in the guild (case-insensitive).
+ */
+export async function renameGroup(
+  db: Db,
+  groupId: number,
+  newName: string
+): Promise<void> {
+  await db
+    .update(groupsTable)
+    .set({ name: newName })
+    .where(eq(groupsTable.id, groupId));
+}
+
 export async function updateGroupLastUsed(
   db: Db,
   groupId: number

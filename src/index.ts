@@ -27,6 +27,7 @@ import {
   handleMyGroups,
   handleMembers,
   handlePing,
+  handleRename,
   handleDelete,
   type BotContext,
 } from './handlers';
@@ -142,6 +143,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
           interaction.guildId,
           interaction.user.id
         );
+      } else if (
+        commandName === 'rename' &&
+        !interaction.memberPermissions.has(PermissionFlagsBits.Administrator)
+      ) {
+        // Non-admins can only rename groups they created
+        groups = (await getGuildGroups(db, interaction.guildId)).filter(
+          (g) => g.creatorId === interaction.user.id
+        );
       } else {
         groups = await getGuildGroups(db, interaction.guildId);
       }
@@ -181,6 +190,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         break;
       case 'ping':
         await handlePing(ctx, interaction);
+        break;
+      case 'rename':
+        await handleRename(ctx, interaction);
         break;
       case 'delete':
         await handleDelete(ctx, interaction);

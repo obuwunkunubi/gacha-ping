@@ -13,6 +13,7 @@ import {
   addMemberToGroup,
   deleteGroup,
   updateGroupLastUsed,
+  renameGroup,
   isMemberInGroup,
   removeMemberAndDeleteGroupIfEmpty,
   removeMembersFromGroup,
@@ -376,6 +377,62 @@ export async function handlePing(
   for (const chunk of chunks.slice(1)) {
     await interaction.followUp({ content: chunk, allowedMentions });
   }
+}
+
+export async function handleRename(
+  { db }: BotContext,
+  interaction: GuildInteraction
+): Promise<void> {
+  const groupName = interaction.options.getString('name', true);
+  const newName = interaction.options.getString('newname', true).trim();
+  const group = await getGroupByName(db, groupName, interaction.guildId);
+
+  if (!group) {
+    await interaction.reply({
+      content: "❌ This group doesn't exist!",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const isCreator = group.creatorId === interaction.user.id;
+  const isAdmin = interaction.memberPermissions.has(
+    PermissionFlagsBits.Administrator
+  );
+  if (!isCreator && !isAdmin) {
+    await interaction.reply({
+      content:
+        '❌ Only the creator of this group or a server administrator can rename it!',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const validation = validateGroupName(newName);
+  if (!validation.valid) {
+    await interaction.reply({
+      content: `❌ ${validation.reason}`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  try {
+    await renameGroup(db, group.id, newName);
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      await interaction.reply({
+        content: '❌ A group with this name already exists!',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    throw error;
+  }
+
+  await interaction.reply(
+    `✅ Group **${group.name}** was renamed to **${newName}**!`
+  );
 }
 
 export async function handleDelete(
