@@ -6,25 +6,17 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
-/**
- * Database schema for managing groups and their members in SQLite using Drizzle ORM.
- * Defines tables and relationships for the group management system.
- */
-
-/**
- * Table for storing group information.
- * Each group belongs to a specific Discord guild (server).
- */
 export const groupsTable = sqliteTable(
   'groups',
   {
-    id: integer('id').primaryKey(),           // Unique identifier for each group
-    name: text('name').notNull(),             // Name of the group (must be unique per guild)
-    guildId: text('guild_id').notNull(),      // Discord guild (server) ID where the group belongs
-    creatorId: text('creator_id').notNull(),  // ID of the user who created the group
-    lastUsed: integer('last_used').notNull(), // Timestamp of the last time the group was used (used for sorting)
+    id: integer('id').primaryKey(),
+    name: text('name').notNull(),
+    guildId: text('guild_id').notNull(),
+    creatorId: text('creator_id').notNull(),
+    lastUsed: integer('last_used').notNull(),
   },
   (t) => [
+    // Names are unique per guild, ignoring case
     uniqueIndex('groups_guild_name_unique').on(
       t.guildId,
       sql`${t.name} COLLATE NOCASE`
@@ -32,48 +24,31 @@ export const groupsTable = sqliteTable(
   ]
 );
 
-/**
- * Table for storing group members.
- * Links users to the groups they have joined.
- */
 export const groupMembersTable = sqliteTable(
   'group_members',
   {
     groupId: integer('group_id')
       .notNull()
-      .references(() => groupsTable.id), // Foreign key linking to the groups table
-    userId: text('user_id').notNull(), // ID of the user who is a member of the group
+      .references(() => groupsTable.id),
+    userId: text('user_id').notNull(),
   },
   (t) => [
     uniqueIndex('group_members_group_user_unique').on(t.groupId, t.userId),
   ]
 );
 
-/**
- * Relationship: A group can have many members.
- * Defines a one-to-many relationship between groups and members.
- */
 export const groupRelations = relations(groupsTable, ({ many }) => ({
-  members: many(groupMembersTable), // Collection of all members belonging to this group
+  members: many(groupMembersTable),
 }));
 
-/**
- * Relationship: Each group member belongs to one group.
- * Defines the inverse relationship from members to their group.
- */
 export const memberRelations = relations(groupMembersTable, ({ one }) => ({
-  /** The group this member belongs to */
   group: one(groupsTable, {
-    fields: [groupMembersTable.groupId], // Foreign key field in group_membersTable
-    references: [groupsTable.id], // References the ID in groupsTable
+    fields: [groupMembersTable.groupId],
+    references: [groupsTable.id],
   }),
 }));
 
-/**
- * Type definitions for database entities.
- * These provide type safety when working with the database.
- */
-export type Group = typeof groupsTable.$inferSelect;                   // Type for selecting group data
-export type InsertGroup = typeof groupsTable.$inferInsert;             // Type for inserting a new group
-export type GroupMember = typeof groupMembersTable.$inferSelect;       // Type for selecting group member data
-export type InsertGroupMember = typeof groupMembersTable.$inferInsert; // Type for inserting a new group member
+export type Group = typeof groupsTable.$inferSelect;
+export type InsertGroup = typeof groupsTable.$inferInsert;
+export type GroupMember = typeof groupMembersTable.$inferSelect;
+export type InsertGroupMember = typeof groupMembersTable.$inferInsert;
